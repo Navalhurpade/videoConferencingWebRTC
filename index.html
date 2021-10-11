@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg" href="./assets/favicon.17e50649.svg" />
+    <title>Web rtc</title>
+  </head>
+  <body>
+    <h2>1. Start your Webcam</h2>
+    <div class="videos">
+      <span>
+        <h3>Local Stream</h3>
+        <video id="webcamVideo" autoplay playsinline></video>
+      </span>
+      <span>
+        <h3>Remote Stream</h3>
+        <video id="remoteVideo" autoplay playsinline></video>
+      </span>
+    </div>
+
+    <button id="webcamButton">Start webcam</button>
+    <h2>2. Create a new Call</h2>
+    <button id="callButton">Create Call (offer)</button>
+
+    <h2>3. Join a Call</h2>
+    <p>Answer the call from a different browser window or device</p>
+
+    <input id="callInput" />
+    <button id="answerButton">Answer</button>
+
+    <h2>4. Hangup</h2>
+
+    <button id="hangupButton" disabled>Hangup</button>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-firestore.js"></script>
+    <script defer>
+      const firebaseConfig = {
+        apiKey: "AIzaSyCGcQQlT6ADjdl0JuQpMMAAmJATsWUe0nw",
+        authDomain: "webrtc-2cd9d.firebaseapp.com",
+        projectId: "webrtc-2cd9d",
+        storageBucket: "webrtc-2cd9d.appspot.com",
+        messagingSenderId: "230153641966",
+        appId: "1:230153641966:web:eb18158eaf6d46a85a38ff",
+      };
+
+      firebase.initializeApp(firebaseConfig);
+
+      const db = firebase.firestore();
+      const firestore = firebase.firestore();
+      console.log(firestore);
+
+      const stunServers = {
+        iceServers: [
+          {
+            urls: [
+              "stun:stun1.l.google.com:19302",
+              "stun:stun2.l.google.com:19302",
+            ],
+          },
+        ],
+        iceCandidatePoolSize: 10,
+      };
+
+      // Global State
+      const pc = new RTCPeerConnection(stunServers);
+      let localStream = null;
+      let remoteStream = null;
+
+      // HTML elements
+      const webcamButton = document.getElementById("webcamButton");
+      const webcamVideo = document.getElementById("webcamVideo");
+      const callButton = document.getElementById("callButton");
+      const callInput = document.getElementById("callInput");
+      const answerButton = document.getElementById("answerButton");
+      const remoteVideo = document.getElementById("remoteVideo");
+      const hangupButton = document.getElementById("hangupButton");
+
+      // Start Webcam
+      webcamButton.addEventListener("click", async () => {
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: true,
+        });
+        remoteStream = new MediaStream();
+
+        // Push tracks from local stream to peer connection
+        localStream.getTracks().forEach((track) => {
+          pc.addTrack(track, localStream);
+        });
+
+        // Pull tracks from remote stream, add to video stream
+        pc.ontrack = (event) => {
+          event.streams[0].getTracks().forEach((track) => {
+            remoteStream.addTrack(track);
+          });
+        };
+        webcamVideo.srcObject = localStream;
+        remoteVideo.srcObject = remoteStream;
+
+        callButton.disabled = false;
+        answerButton.disabled = false;
+        webcamButton.disabled = true;
+      });
+
+      //Create Offer
+      callButton.addEventListener("click", async () => {
+        const callDoc = db.collection("calls").doc();
+        const offersCandidates = callDoc.collection("offerCandidates");
+        const answerCandidates = callDoc.collection("answerCandidates");
+
+        callInput.value = callDoc.id;
+        console.log(callDoc.id);
+
+        //Listner to ice Candidte genrated by peer connection
+        pc.onicecandidate = (event) => {
+          if (event.candidate) offersCandidates.add(event.candidate.toJSON());
+        };
+
+        //Create Offer
+        const offerDescription = await pc.createOffer();
+        await pc.setLocalDescription(offerDescription);
+
+        //Store offer doc in collection
+        const offer = {
+          sdp: offerDescription.sdp,
+          type: offerDescription.type,
+        };
+        await callDoc.set({ offer });
+
+        //Listen for remote answer in doc
+        callDoc.onSnapshot((snapshot) => {
+          const data = snapshot.data();
+          console.log("noticed a change in call doc", data);
+
+          if (!pc.currentRemoteDescription && data?.answer) {
+            console.log("call doc has ans adding as remote dsp");
+            const answareDespryption = new RTCSessionDescription(data.answer);
+            pc.setRemoteDescription(answareDespryption);
+          }
+        });
+
+        // When answered add ansCandidte to pc
+        answerCandidates.onSnapshot((snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            if (change.type === "added") {
+              console.log("Noticed changes in ansCandiate");
+              const candidate = new RTCIceCandidate(change.doc.data());
+              pc.addIceCandidate(candidate);
+            }
+          });
+        });
+
+        hangupButton.disabled = false;
+      });
+
+      //Answer the call with the unique ID
+      answerButton.addEventListener("click", async (event) => {
+        const callId = callInput.value;
+
+        //Refence perticuller doc in calls collection by id
+        const callDoc = db.collection("calls").doc(callId);
+        const answerCandidates = callDoc.collection("answerCandidates");
+        const offerCandidates = callDoc.collection("offerCandidates");
+
+        if (!callId) return alert("Please enter vaild id");
+
+        //Add ice candidate to firestore
+        pc.onicecandidate = async (event) => {
+          if (event.candidate)
+            await answerCandidates.add(event.candidate.toJSON());
+        };
+
+        const callData = (await callDoc.get()).data();
+
+        const remoteDescription = callData.offer;
+        await pc.setRemoteDescription(
+          new RTCSessionDescription(remoteDescription)
+        );
+
+        const localDescription = await pc.createAnswer();
+        await pc.setLocalDescription(localDescription);
+
+        const answer = {
+          type: localDescription.type,
+          sdp: localDescription.sdp,
+        };
+
+        await callDoc.update({ answer });
+
+        // When answered add ansCandidte to pc
+        offerCandidates.onSnapshot((snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+            console.log("Noticed changes in ansCandiate");
+
+            if (change.type === "added") {
+              console.log("doc added");
+              let data = change.doc.data();
+              pc.addIceCandidate(new RTCIceCandidate(data));
+            }
+          });
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -19,14 +19,12 @@
     </div>
 
     <button id="webcamButton">Start webcam</button>
-    <h2>2. Create a new Call</h2>
-    <button id="callButton">Create Call (offer)</button>
 
-    <h2>3. Join a Call</h2>
-    <p>Answer the call from a different browser window or device</p>
+    <h2>2. Create a new Call</h2>
+    <button id="callButton">Create meeting</button>
 
     <input id="callInput" />
-    <button id="answerButton">Answer</button>
+    <button id="answerButton">Copy Link</button>
 
     <h2>4. Hangup</h2>
 
@@ -72,12 +70,12 @@
       const webcamVideo = document.getElementById("webcamVideo");
       const callButton = document.getElementById("callButton");
       const callInput = document.getElementById("callInput");
-      const answerButton = document.getElementById("answerButton");
+      const copyLink = document.getElementById("answerButton");
       const remoteVideo = document.getElementById("remoteVideo");
       const hangupButton = document.getElementById("hangupButton");
+      const linkSpan = document.getElementById("link");
 
-      // Start Webcam
-      webcamButton.addEventListener("click", async () => {
+      const startWebCam =  async () => {
         localStream = await navigator.mediaDevices.getUserMedia({
           audio: true,
           video: true,
@@ -98,10 +96,24 @@
         webcamVideo.srcObject = localStream;
         remoteVideo.srcObject = remoteStream;
 
+        const urlParams = new URLSearchParams(window.location.search);
+        const id = urlParams.get('id');
+
+        if(id){
+          console.log("ans call id", id)
+
+          ansCall(id)
+        }
+
         callButton.disabled = false;
-        answerButton.disabled = false;
+        copyLink.disabled = false;
         webcamButton.disabled = true;
-      });
+      }
+
+      startWebCam()
+
+      // Start Webcam
+      // webcamButton.addEventListener("click", startWebCam);
 
       //Create Offer
       callButton.addEventListener("click", async () => {
@@ -109,8 +121,11 @@
         const offersCandidates = callDoc.collection("offerCandidates");
         const answerCandidates = callDoc.collection("answerCandidates");
 
-        callInput.value = callDoc.id;
         console.log(callDoc.id);
+
+        let link = `https://navalhurpade.github.io/videoConferencingWebRTC?id=${callDoc.id}`
+        callInput.value = link;
+
 
         //Listner to ice Candidte genrated by peer connection
         pc.onicecandidate = (event) => {
@@ -154,9 +169,8 @@
         hangupButton.disabled = false;
       });
 
-      //Answer the call with the unique ID
-      answerButton.addEventListener("click", async (event) => {
-        const callId = callInput.value;
+      const ansCall =  async (id) => {
+        const callId = id
 
         //Refence perticuller doc in calls collection by id
         const callDoc = db.collection("calls").doc(callId);
@@ -175,7 +189,7 @@
 
         const remoteDescription = callData.offer;
         await pc.setRemoteDescription(
-          new RTCSessionDescription(remoteDescription)
+                new RTCSessionDescription(remoteDescription)
         );
 
         const localDescription = await pc.createAnswer();
@@ -200,6 +214,12 @@
             }
           });
         });
+      }
+
+      //Answer the call with the unique ID
+      copyLink.addEventListener("click",() => {
+        navigator.clipboard.writeText(callInput.value);
+        alert("Link copied")
       });
     </script>
   </body>
